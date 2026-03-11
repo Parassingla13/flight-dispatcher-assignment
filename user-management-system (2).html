@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>UserBase – Database System with User Login & Record Management</title>
+<!--
+  Assignment 2 – Database System with User Login and Record Management
+  ====================================================================
+  Steps covered:
+    Step 1 – Excel import → auto-generate credentials → simulate email
+    Step 2 – Login, view, edit, delete own record
+    Step 3 – Registration with OTP email verification
+    Step 4 – First-login forced password change
+
+  Stack: Vanilla HTML/CSS/JS (zero dependencies except SheetJS for Excel)
+  Database: In-memory JS object (production: replace with PostgreSQL/MySQL)
+  Email: Simulated via console.log (production: replace with SendGrid/Nodemailer)
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
+/* ── Reset & Tokens ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #f2efe9;
+  --surface:  #ffffff;
+  --surface2: #f8f6f2;
+  --border:   #e4e0d8;
+  --text:     #18160f;
+  --text2:    #716c60;
+  --text3:    #a09990;
+  --navy:     #1e3a5f;
+  --navy-lt:  #ebf2fb;
+  --teal:     #0d7a6e;
+  --teal-lt:  #e6f7f5;
+  --amber:    #b45309;
+  --amber-lt: #fef3c7;
+  --red:      #b91c1c;
+  --red-lt:   #fef2f2;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --shadow:    0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.05);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+  --radius:   10px;
+  --radius-lg:16px;
+}
+body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; line-height: 1.5; }
+
+/* ── Layout ─────────────────────────────────────────────────── */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px; min-height: 100vh; background: var(--navy);
+  display: flex; flex-direction: column; position: fixed;
+  top: 0; left: 0; height: 100vh; z-index: 200;
+}
+.sidebar-brand {
+  padding: 22px 20px 18px; border-bottom: 1px solid rgba(255,255,255,0.07);
+  font-size: 17px; font-weight: 700; color: #fff; letter-spacing: -0.4px;
+}
+.sidebar-brand span { color: #7ec8e3; }
+.sidebar-nav { padding: 10px 8px; flex: 1; overflow-y: auto; }
+.nav-label { font-size: 10px; font-weight: 600; letter-spacing: 1.2px;
+  text-transform: uppercase; color: rgba(255,255,255,0.3);
+  padding: 14px 12px 6px; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px; border-radius: 7px; cursor: pointer;
+  font-size: 13.5px; font-weight: 500; color: rgba(255,255,255,0.6);
+  transition: all 0.15s; margin-bottom: 1px;
+}
+.nav-item:hover { background: rgba(255,255,255,0.07); color: #fff; }
+.nav-item.active { background: rgba(126,200,227,0.15); color: #7ec8e3; }
+.nav-item .ni { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+.sidebar-footer { padding: 12px 8px; border-top: 1px solid rgba(255,255,255,0.07); }
+
+.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; }
+.topbar {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 28px; height: 56px; display: flex; align-items: center;
+  justify-content: space-between; position: sticky; top: 0; z-index: 100;
+  box-shadow: var(--shadow-sm);
+}
+.topbar-title { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+.user-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 24px; padding: 5px 12px 5px 5px;
+}
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--navy), #3b82f6);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+.content { padding: 28px; flex: 1; }
+
+/* ── Cards ──────────────────────────────────────────────────── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.card-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card-title { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
+.card-body { padding: 22px; }
+
+/* ── Stats ───────────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 22px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 20px; box-shadow: var(--shadow); }
+.stat-label { font-size: 11px; font-weight: 600; letter-spacing: 0.4px; color: var(--text2); text-transform: uppercase; margin-bottom: 6px; }
+.stat-value { font-size: 30px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; }
+.stat-sub { font-size: 11px; color: var(--text3); margin-top: 5px; }
+
+/* ── Table ───────────────────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead tr { background: var(--surface2); }
+th { padding: 9px 14px; text-align: left; font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text2); border-bottom: 2px solid var(--border); white-space: nowrap; }
+td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--surface2); }
+
+/* ── Badges ──────────────────────────────────────────────────── */
+.badge { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.2px; white-space: nowrap; }
+.badge-navy   { background: var(--navy-lt);  color: var(--navy); }
+.badge-teal   { background: var(--teal-lt);  color: var(--teal); }
+.badge-amber  { background: var(--amber-lt); color: var(--amber); }
+.badge-red    { background: var(--red-lt);   color: var(--red); }
+.badge-gray   { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; font-family: inherit; white-space: nowrap; }
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover { background: #152e4d; }
+.btn-teal { background: var(--teal); color: #fff; }
+.btn-teal:hover { background: #0a6358; }
+.btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--surface2); color: var(--text); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { background: #991b1b; }
+.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Forms ───────────────────────────────────────────────────── */
+.form-group { margin-bottom: 16px; }
+label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text2); margin-bottom: 5px; letter-spacing: 0.2px; }
+input, select, textarea {
+  width: 100%; padding: 9px 12px; border: 1.5px solid var(--border);
+  border-radius: 8px; font-size: 13.5px; font-family: inherit;
+  background: var(--surface); color: var(--text); outline: none; transition: border 0.15s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(30,58,95,0.08); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+/* ── Alerts ──────────────────────────────────────────────────── */
+.alert { padding: 11px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; margin-bottom: 14px; }
+.alert-success { background: var(--teal-lt); color: var(--teal); }
+.alert-error   { background: var(--red-lt);  color: var(--red); }
+.alert-info    { background: var(--navy-lt); color: var(--navy); }
+.alert-amber   { background: var(--amber-lt);color: var(--amber); }
+
+/* ── Modal ───────────────────────────────────────────────────── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+.modal { background: var(--surface); border-radius: var(--radius-lg); width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: popIn 0.18s ease; }
+.modal-hdr { padding: 22px 24px 14px; border-bottom: 1px solid var(--border); }
+.modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.modal-body { padding: 22px 24px; }
+.modal-ftr { padding: 12px 24px 20px; display: flex; gap: 8px; justify-content: flex-end; }
+@keyframes popIn { from{transform:scale(0.95);opacity:0} to{transform:scale(1);opacity:1} }
+
+/* ── Auth ────────────────────────────────────────────────────── */
+.auth-wrap { min-height: 100vh; background: linear-gradient(135deg, #0f1f35 0%, #1e3a5f 60%, #0d4a42 100%); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.auth-card { background: var(--surface); border-radius: 20px; width: 100%; max-width: 420px; padding: 38px; box-shadow: var(--shadow-lg); }
+.auth-logo { font-size: 26px; font-weight: 800; color: var(--navy); letter-spacing: -1px; margin-bottom: 4px; }
+.auth-logo span { color: #3b82f6; }
+.auth-sub { color: var(--text2); font-size: 13px; margin-bottom: 28px; }
+.divider { height: 1px; background: var(--border); margin: 18px 0; }
+.link { color: var(--navy); font-weight: 600; cursor: pointer; text-decoration: none; }
+.link:hover { text-decoration: underline; }
+
+/* ── OTP ─────────────────────────────────────────────────────── */
+.otp-row { display: flex; gap: 8px; justify-content: center; margin: 14px 0; }
+.otp-row input { width: 46px; text-align: center; font-size: 22px; font-weight: 700; font-family: 'DM Mono', monospace; padding: 10px 0; border-radius: 8px; }
+
+/* ── Password strength ───────────────────────────────────────── */
+.pw-bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 6px; overflow: hidden; }
+.pw-fill { height: 100%; border-radius: 2px; transition: width 0.3s, background 0.3s; }
+.pw-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+/* ── Upload zone ─────────────────────────────────────────────── */
+.drop-zone { border: 2px dashed var(--border); border-radius: var(--radius-lg); padding: 36px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--surface2); }
+.drop-zone:hover, .drop-zone.over { border-color: var(--navy); background: var(--navy-lt); }
+.drop-icon { font-size: 36px; margin-bottom: 10px; }
+
+/* ── Misc ────────────────────────────────────────────────────── */
+.mono { font-family: 'DM Mono', monospace; font-size: 12px; }
+.actions { display: flex; gap: 5px; }
+.empty { text-align: center; padding: 44px; color: var(--text2); }
+.empty-icon { font-size: 36px; margin-bottom: 10px; }
+.page { animation: fadeUp 0.22s ease; }
+@keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+.search-wrap { position: relative; }
+.search-wrap input { padding-left: 34px; }
+.search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
+.detail-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.detail-row:last-child { border-bottom: none; }
+.detail-label { color: var(--text2); font-weight: 500; }
+.detail-value { font-weight: 600; }
+
+@media(max-width:800px){
+  .sidebar{transform:translateX(-100%)}
+  .main{margin-left:0}
+  .stats{grid-template-columns:1fr 1fr}
+  .row2{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════
+   DATABASE  (In-memory – replace with real DB in production)
+   Schema mirrors the SQL schema defined in docs/database_schema.sql
+   ════════════════════════════════════════════════════════════════ */
+const DB = {
+  users:       [],   // Table: users
+  otps:        {},   // Temp store: email → {code, data, exp}
+  sessions:    {},   // Map: token → userId
+  nextId:      1,
+};
+
+/* ════════════════════════════════════════════════════════════════
+   UTILITIES
+   ════════════════════════════════════════════════════════════════ */
+const genId       = () => DB.nextId++;
+const genToken    = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const genOTP      = () => String(100000 + Math.floor(Math.random() * 900000));
+const initials    = n => n.split(" ").map(w=>w[0]||"").slice(0,2).join("").toUpperCase();
+const fmtDate     = d => new Date(d).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"});
+
+function genUsername(first, last) {
+  const base = (first[0] + last).toLowerCase().replace(/[^a-z]/g,"");
+  return base + String(10 + Math.floor(Math.random() * 89));
+}
+function genPassword() {
+  const u="ABCDEFGHJKLMNPQRSTUVWXYZ", l="abcdefghjkmnpqrstuvwxyz", d="23456789", s="@#!";
+  const pick = str => str[Math.floor(Math.random()*str.length)];
+  return [pick(u),pick(u),pick(l),pick(l),pick(l),pick(d),pick(d),pick(s),pick(l),pick(d)].sort(()=>Math.random()-0.5).join("");
+}
+function hashPw(pw) { return btoa(unescape(encodeURIComponent(pw + ":ub_salt_2024"))); }
+function verifyPw(pw, hash) { return hashPw(pw) === hash; }
+function pwStrength(p) {
+  return [p.length>=8, /[A-Z]/.test(p), /[0-9]/.test(p), /[^a-zA-Z0-9]/.test(p)].filter(Boolean).length;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   EMAIL SERVICE  (Simulated – replace with SendGrid / Nodemailer)
+   ════════════════════════════════════════════════════════════════ */
+function sendEmail(to, subject, body) {
+  // In production: await sendgrid.send({ to, subject, text: body });
+  console.log(`\n📧 EMAIL\nTo: ${to}\nSubject: ${subject}\n${body}\n${"─".repeat(50)}`);
+}
+function emailCredentials(user, password) {
+  sendEmail(user.email, "Your UserBase Account Credentials",
+    `Hello ${user.firstName},\n\nYour account has been created.\n\nUsername: ${user.username}\nPassword: ${password}\n\nPlease log in at http://localhost and change your password immediately.\n\nRegards,\nUserBase System`);
+}
+function emailOTP(email, otp) {
+  sendEmail(email, "Your Verification Code",
+    `Your one-time verification code is:\n\n  ${otp}\n\nThis code expires in 10 minutes.\nDo not share it with anyone.`);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   USER SERVICE
+   ════════════════════════════════════════════════════════════════ */
+const UserSvc = {
+  create(data, isImport = false) {
+    const username = genUsername(data.firstName, data.lastName);
+    const password = genPassword();
+    const user = {
+      id:                 genId(),
+      firstName:          data.firstName.trim(),
+      lastName:           data.lastName.trim(),
+      email:              data.email.trim().toLowerCase(),
+      phone:              data.phone || "",
+      role:               data.role || "Employee",
+      department:         data.department || "",
+      username,
+      passwordHash:       hashPw(password),
+      mustChangePassword: true,
+      isActive:           true,
+      source:             isImport ? "import" : "registration",
+      createdAt:          new Date().toISOString(),
+    };
+    DB.users.push(user);
+    emailCredentials(user, password);
+    return { user, password };
+  },
+
+  importRows(rows) {
+    return rows.map(row => {
+      if (!row.firstName || !row.email) return { email: row.email||"?", status:"skipped", reason:"Missing required fields" };
+      if (DB.users.find(u => u.email === row.email.toLowerCase())) return { email: row.email, status:"skipped", reason:"Email already exists" };
+      const { user, password } = UserSvc.create(row, true);
+      return { email: user.email, username: user.username, password, status: "created" };
+    });
+  },
+
+  getAll()      { return [...DB.users]; },
+  getById(id)   { return DB.users.find(u => u.id === id) || null; },
+  getByLogin(q) { return DB.users.find(u => u.username === q || u.email === q) || null; },
+
+  update(id, data) {
+    const i = DB.users.findIndex(u => u.id === id);
+    if (i < 0) return null;
+    DB.users[i] = { ...DB.users[i], ...data, id };
+    return DB.users[i];
+  },
+  delete(id) {
+    const i = DB.users.findIndex(u => u.id === id);
+    if (i < 0) return false;
+    DB.users.splice(i, 1);
+    return true;
+  },
+  changePassword(id, newPw) {
+    return UserSvc.update(id, { passwordHash: hashPw(newPw), mustChangePassword: false });
+  },
+
+  sendOTP(email, data) {
+    const otp = genOTP();
+    DB.otps[email] = { otp, data, exp: Date.now() + 10*60*1000 };
+    emailOTP(email, otp);
+    return otp; // returned only for demo display
+  },
+  verifyOTP(email, code) {
+    const rec = DB.otps[email];
+    if (!rec)              return { ok:false, error:"No OTP found. Please request again." };
+    if (Date.now()>rec.exp)return { ok:false, error:"OTP expired. Please request again." };
+    if (rec.otp !== code)  return { ok:false, error:"Incorrect code. Please try again." };
+    const data = rec.data;
+    delete DB.otps[email];
+    return { ok:true, data };
+  },
+};
+
+/* ════════════════════════════════════════════════════════════════
+   AUTH SERVICE
+   ════════════════════════════════════════════════════════════════ */
+const Auth = {
+  currentUser: null,
+  token:       null,
+
+  login(login, password) {
+    const user = UserSvc.getByLogin(login);
+    if (!user)                    return { ok:false, error:"No account found with those credentials." };
+    if (!verifyPw(password, user.passwordHash)) return { ok:false, error:"Incorrect password." };
+    if (!user.isActive)           return { ok:false, error:"Your account is inactive." };
+    const token = genToken();
+    DB.sessions[token] = user.id;
+    Auth.token = token;
+    Auth.currentUser = user;
+    return { ok:true, user };
+  },
+  logout() {
+    if (Auth.token) delete DB.sessions[Auth.token];
+    Auth.token = null;
+    Auth.currentUser = null;
+  },
+  refresh() {
+    if (!Auth.currentUser) return;
+    Auth.currentUser = UserSvc.getById(Auth.currentUser.id);
+  },
+};
+
+/* ════════════════════════════════════════════════════════════════
+   SEED DATA  (pre-load demo users)
+   ════════════════════════════════════════════════════════════════ */
+(function seed() {
+  // Admin account — no mustChangePassword for easy demo
+  const admin = {
+    id: genId(), firstName:"Admin", lastName:"User",
+    email:"admin@userbase.com", phone:"+1-555-0000",
+    role:"Administrator", department:"IT",
+    username:"admin", passwordHash:hashPw("Admin@123"),
+    mustChangePassword:false, isActive:true,
+    source:"seed", createdAt:new Date().toISOString(),
+  };
+  DB.users.push(admin);
+  // Regular demo users
+  [
+    {firstName:"Alice",  lastName:"Chen",     email:"alice@demo.com",  role:"Manager",   department:"Operations", phone:"+1-555-0101"},
+    {firstName:"Bob",    lastName:"Martinez", email:"bob@demo.com",    role:"Analyst",   department:"Finance",    phone:"+1-555-0102"},
+    {firstName:"Carol",  lastName:"Williams", email:"carol@demo.com",  role:"Engineer",  department:"IT",         phone:"+1-555-0103"},
+  ].forEach(d => UserSvc.create(d));
+  DB.nextId = 10;
+})();
+
+/* ════════════════════════════════════════════════════════════════
+   APP STATE & RENDERER
+   ════════════════════════════════════════════════════════════════ */
+const S = {
+  page:        "login",   // login|register|otp|change-pw|dashboard|users|import|profile|edit-user
+  alert:       null,
+  modal:       null,      // null | "view-user" | "add-user" | "change-pw" | object(user)
+  editUser:    null,
+  importRes:   null,
+  otpEmail:    null,
+  otpData:     null,
+  devOTP:      null,
+  search:      "",
+};
+
+function go(page, extra={}) { Object.assign(S, { page, alert:null, ...extra }); render(); }
+function setS(patch)        { Object.assign(S, patch); render(); }
+
+function showAlert(msg, type="info", ms=4000) {
+  S.alert = {msg,type};
+  render();
+  if (ms) setTimeout(()=>{ S.alert=null; render(); }, ms);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   HTML HELPERS
+   ════════════════════════════════════════════════════════════════ */
+const alertHTML = () => S.alert
+  ? `<div class="alert alert-${S.alert.type}">${S.alert.msg}</div>` : "";
+
+const badgeRole = r => {
+  const m = {Administrator:"navy",Manager:"teal",Director:"teal",Analyst:"navy",Engineer:"gray",Employee:"gray"};
+  return `<span class="badge badge-${m[r]||"gray"}">${r}</span>`;
+};
+const badgeActive = a => `<span class="badge badge-${a?"teal":"red"}">${a?"Active":"Inactive"}</span>`;
+const badgePW     = m => `<span class="badge badge-${m?"amber":"teal"}">${m?"Must Change":"Set"}</span>`;
+
+/* ════════════════════════════════════════════════════════════════
+   AUTH SCREENS
+   ════════════════════════════════════════════════════════════════ */
+function renderLogin() {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-logo">User<span>Base</span></div>
+    <div class="auth-sub">Sign in to your account</div>
+    ${alertHTML()}
+    <div class="form-group"><label>Username or Email</label>
+      <input id="l-id" placeholder="admin  or  alice@demo.com" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+    <div class="form-group"><label>Password</label>
+      <input id="l-pw" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px" onclick="doLogin()">Sign In →</button>
+    <div class="divider"></div>
+    <div style="text-align:center;font-size:13px;color:var(--text2)">
+      No account? <a class="link" onclick="go('register')">Register here</a>
+    </div>
+    <div style="margin-top:18px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2);line-height:1.8">
+      <strong>Demo login:</strong><br>
+      Admin: <span class="mono">admin</span> / <span class="mono">Admin@123</span><br>
+      <span style="color:var(--text3)">Other users: credentials logged to browser console after import</span>
+    </div>
+  </div></div>`;
+}
+
+function renderRegister() {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-logo">User<span>Base</span></div>
+    <div class="auth-sub">Create a new account</div>
+    ${alertHTML()}
+    <div class="row2">
+      <div class="form-group"><label>First Name *</label><input id="r-fn" placeholder="John"/></div>
+      <div class="form-group"><label>Last Name *</label><input id="r-ln" placeholder="Doe"/></div>
+    </div>
+    <div class="form-group"><label>Email Address *</label><input id="r-em" type="email" placeholder="john@example.com"/></div>
+    <div class="form-group"><label>Phone</label><input id="r-ph" placeholder="+1-555-0000"/></div>
+    <div class="form-group"><label>Department</label><input id="r-dp" placeholder="Engineering"/></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px" onclick="doRequestOTP()">
+      Verify Email & Continue →
+    </button>
+    <div class="divider"></div>
+    <div style="text-align:center;font-size:13px;color:var(--text2)">
+      Already registered? <a class="link" onclick="go('login')">Sign in</a>
+    </div>
+  </div></div>`;
+}
+
+function renderOTP() {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-logo" style="font-size:22px">🔐 Verify Email</div>
+    <div class="auth-sub">Enter the 6-digit code sent to <strong>${S.otpEmail}</strong></div>
+    ${alertHTML()}
+    ${S.devOTP ? `<div class="alert alert-amber">📧 Demo OTP (normally sent via email): <strong>${S.devOTP}</strong></div>` : ""}
+    <div class="otp-row">
+      ${[0,1,2,3,4,5].map(i=>`<input type="text" maxlength="1" id="otp${i}" class="otp-d" oninput="otpFwd(${i})" onkeydown="otpBck(event,${i})"/>`).join("")}
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;margin-top:4px" onclick="doVerifyOTP()">
+      Confirm & Create Account →
+    </button>
+    <div style="text-align:center;margin-top:14px;font-size:13px;display:flex;gap:16px;justify-content:center">
+      <a class="link" onclick="doResendOTP()">Resend code</a>
+      <a class="link" style="color:var(--text2);font-weight:400" onclick="go('register')">← Back</a>
+    </div>
+  </div></div>`;
+}
+
+function renderChangePW() {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-logo" style="font-size:22px">🔑 Set New Password</div>
+    <div class="auth-sub">Security policy requires you to set a new password before continuing.</div>
+    ${alertHTML()}
+    <div class="form-group">
+      <label>New Password</label>
+      <input id="cp-a" type="password" placeholder="Min 8 characters" oninput="pwBar('cp-a','cp-bar','cp-lbl')"/>
+      <div class="pw-bar"><div class="pw-fill" id="cp-bar" style="width:0"></div></div>
+      <div class="pw-hint" id="cp-lbl"></div>
+    </div>
+    <div class="form-group">
+      <label>Confirm Password</label>
+      <input id="cp-b" type="password" placeholder="Repeat password"/>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px" onclick="doChangePW()">
+      Set Password & Enter App →
+    </button>
+  </div></div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   APP SHELL
+   ════════════════════════════════════════════════════════════════ */
+function renderApp() {
+  const u = Auth.currentUser;
+  const isAdmin = ["Administrator","Manager","Director"].includes(u.role);
+  const navItems = [
+    {p:"dashboard", icon:"📊", label:"Dashboard"},
+    ...(isAdmin ? [
+      {p:"users",  icon:"👥", label:"Users"},
+      {p:"import", icon:"📥", label:"Import Excel"},
+    ] : []),
+    {p:"profile", icon:"👤", label:"My Profile"},
+  ];
+
+  let content = "";
+  if      (S.page==="dashboard") content = renderDashboard();
+  else if (S.page==="users")     content = renderUsers();
+  else if (S.page==="import")    content = renderImport();
+  else if (S.page==="profile")   content = renderProfile();
+  else if (S.page==="edit-user") content = renderEditUser();
+  else content = renderDashboard();
+
+  const titles = {dashboard:"Dashboard",users:"User Management",import:"Import from Excel",profile:"My Profile","edit-user":"Edit User"};
+
+  return `<div class="app">
+    <nav class="sidebar">
+      <div class="sidebar-brand">User<span>Base</span></div>
+      <div class="sidebar-nav">
+        <div class="nav-label">Menu</div>
+        ${navItems.map(n=>`
+          <div class="nav-item ${S.page===n.p?"active":""}" onclick="go('${n.p}')">
+            <span class="ni">${n.icon}</span> ${n.label}
+          </div>`).join("")}
+      </div>
+      <div class="sidebar-footer">
+        <div class="nav-item" onclick="doLogout()"><span class="ni">🚪</span> Logout</div>
+      </div>
+    </nav>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">${titles[S.page]||"Dashboard"}</div>
+        <div class="user-chip">
+          <div class="avatar">${initials(u.firstName+" "+u.lastName)}</div>
+          <span style="font-size:13px;font-weight:500">${u.firstName} ${u.lastName}</span>
+          ${badgeRole(u.role)}
+        </div>
+      </header>
+      <div class="content page">
+        ${alertHTML()}
+        ${content}
+      </div>
+    </main>
+    ${S.modal ? renderModal() : ""}
+  </div>`;
+}
+
+/* ── Dashboard ──────────────────────────────────────────────────── */
+function renderDashboard() {
+  const all = UserSvc.getAll();
+  const active   = all.filter(u=>u.isActive).length;
+  const imported = all.filter(u=>u.source==="import").length;
+  const pending  = all.filter(u=>u.mustChangePassword).length;
+  return `
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Users</div><div class="stat-value">${all.length}</div><div class="stat-sub">All accounts</div></div>
+    <div class="stat"><div class="stat-label">Active</div><div class="stat-value" style="color:var(--teal)">${active}</div><div class="stat-sub">Active accounts</div></div>
+    <div class="stat"><div class="stat-label">Imported</div><div class="stat-value" style="color:var(--navy)">${imported}</div><div class="stat-sub">From Excel</div></div>
+    <div class="stat"><div class="stat-label">Pending PW</div><div class="stat-value" style="color:var(--amber)">${pending}</div><div class="stat-sub">Must change pw</div></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Recent Users</div>
+      <button class="btn btn-primary btn-sm" onclick="go('users')">View All</button>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>Status</th><th>Joined</th></tr></thead>
+      <tbody>${all.slice(0,6).map(u=>`
+        <tr>
+          <td><div style="display:flex;align-items:center;gap:9px">
+            <div class="avatar" style="width:30px;height:30px;font-size:10px">${initials(u.firstName+" "+u.lastName)}</div>
+            <span style="font-weight:500">${u.firstName} ${u.lastName}</span>
+          </div></td>
+          <td style="color:var(--text2)">${u.email}</td>
+          <td>${badgeRole(u.role)}</td>
+          <td style="color:var(--text2)">${u.department||"—"}</td>
+          <td>${badgeActive(u.isActive)}</td>
+          <td style="color:var(--text2);font-size:12px">${fmtDate(u.createdAt)}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+/* ── Users ──────────────────────────────────────────────────────── */
+function renderUsers() {
+  const q = S.search.toLowerCase();
+  const list = UserSvc.getAll().filter(u =>
+    !q || [u.firstName,u.lastName,u.email,u.username,u.department,u.role].some(v=>(v||"").toLowerCase().includes(q))
+  );
+  return `
+  <div style="display:flex;gap:10px;margin-bottom:18px;align-items:center;flex-wrap:wrap">
+    <div class="search-wrap" style="flex:1;min-width:200px">
+      <span class="search-icon">🔍</span>
+      <input placeholder="Search name, email, role…" value="${S.search}" oninput="S.search=this.value;render()"/>
+    </div>
+    <button class="btn btn-primary" onclick="openModal('add-user')">+ Add User</button>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">All Users <span style="color:var(--text2);font-weight:400;font-size:13px">(${list.length})</span></div>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>User</th><th>Username</th><th>Role</th><th>Dept</th><th>Status</th><th>PW</th><th>Source</th><th>Actions</th></tr></thead>
+      <tbody>${list.length===0 ? `<tr><td colspan="8"><div class="empty"><div class="empty-icon">👥</div>No users found</div></td></tr>` :
+        list.map(u=>`<tr>
+          <td><div style="display:flex;align-items:center;gap:9px">
+            <div class="avatar" style="width:32px;height:32px;font-size:11px">${initials(u.firstName+" "+u.lastName)}</div>
+            <div><div style="font-weight:500">${u.firstName} ${u.lastName}</div>
+            <div style="font-size:11px;color:var(--text2)">${u.email}</div></div>
+          </div></td>
+          <td><span class="mono">${u.username}</span></td>
+          <td>${badgeRole(u.role)}</td>
+          <td style="color:var(--text2)">${u.department||"—"}</td>
+          <td>${badgeActive(u.isActive)}</td>
+          <td>${badgePW(u.mustChangePassword)}</td>
+          <td><span class="badge badge-${u.source==="import"?"navy":u.source==="seed"?"gray":"teal"}">${u.source}</span></td>
+          <td><div class="actions">
+            <button class="btn btn-ghost btn-sm" onclick="viewUser(${u.id})">View</button>
+            <button class="btn btn-ghost btn-sm" onclick="editUser(${u.id})">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})">Del</button>
+          </div></td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+/* ── Import ─────────────────────────────────────────────────────── */
+function renderImport() {
+  const res = S.importRes;
+  return `
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header"><div class="card-title">Import Users from Excel</div></div>
+    <div class="card-body">
+      <p style="color:var(--text2);font-size:13px;margin-bottom:18px;line-height:1.7">
+        Upload an <strong>.xlsx</strong> or <strong>.xls</strong> file. Required columns:
+        <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">firstName</span>
+        <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">lastName</span>
+        <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">email</span>.
+        Optional: <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">phone</span>
+        <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">role</span>
+        <span class="mono" style="background:var(--surface2);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">department</span>.
+      </p>
+      <div class="drop-zone" id="dz" onclick="document.getElementById('xls-input').click()"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="handleDrop(event)">
+        <div class="drop-icon">📊</div>
+        <div style="font-weight:600;margin-bottom:4px">Click to upload or drag & drop</div>
+        <div style="font-size:12px;color:var(--text2)">Supports .xlsx and .xls</div>
+      </div>
+      <input type="file" id="xls-input" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this)"/>
+      <div style="margin-top:14px">
+        <button class="btn btn-ghost btn-sm" onclick="downloadSample()">⬇ Download sample_users.xlsx</button>
+      </div>
+    </div>
+  </div>
+  ${res ? `
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Import Results</div>
+      <div style="display:flex;gap:8px">
+        <span class="badge badge-teal">${res.filter(r=>r.status==="created").length} Created</span>
+        ${res.filter(r=>r.status==="skipped").length > 0 ? `<span class="badge badge-amber">${res.filter(r=>r.status==="skipped").length} Skipped</span>` : ""}
+      </div>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Email</th><th>Username</th><th>Temp Password</th><th>Status</th><th>Note</th></tr></thead>
+      <tbody>${res.map(r=>`
+        <tr>
+          <td>${r.email}</td>
+          <td><span class="mono">${r.username||"—"}</span></td>
+          <td><span class="mono">${r.password||"—"}</span></td>
+          <td><span class="badge badge-${r.status==="created"?"teal":"amber"}">${r.status}</span></td>
+          <td style="color:var(--text2);font-size:12px">${r.reason||"Credentials emailed ✓"}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>
+  </div>` : ""}`;
+}
+
+/* ── Profile ────────────────────────────────────────────────────── */
+function renderProfile() {
+  const u = Auth.currentUser;
+  return `<div style="max-width:580px">
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-body" style="display:flex;align-items:center;gap:18px">
+        <div class="avatar" style="width:64px;height:64px;font-size:22px">${initials(u.firstName+" "+u.lastName)}</div>
+        <div>
+          <div style="font-size:20px;font-weight:700;letter-spacing:-0.5px">${u.firstName} ${u.lastName}</div>
+          <div style="color:var(--text2);font-size:13px;margin-top:2px">${u.email}</div>
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+            ${badgeRole(u.role)} ${badgeActive(u.isActive)}
+            ${u.department?`<span class="badge badge-gray">${u.department}</span>`:""}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Edit My Details</div></div>
+      <div class="card-body">
+        <div class="row2">
+          <div class="form-group"><label>First Name</label><input id="p-fn" value="${u.firstName}"/></div>
+          <div class="form-group"><label>Last Name</label> <input id="p-ln" value="${u.lastName}"/></div>
+        </div>
+        <div class="form-group"><label>Phone</label><input id="p-ph" value="${u.phone||""}"/></div>
+        <div class="form-group"><label>Department</label><input id="p-dp" value="${u.department||""}"/></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
+          <button class="btn btn-ghost"   onclick="openModal('change-pw')">Change Password</button>
+          <button class="btn btn-danger"  onclick="deleteOwnAccount()">Delete My Account</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── Edit User ──────────────────────────────────────────────────── */
+function renderEditUser() {
+  const u = S.editUser;
+  if (!u) return "<p>No user selected.</p>";
+  return `<div style="max-width:580px">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Editing: ${u.firstName} ${u.lastName}</div>
+        <button class="btn btn-ghost btn-sm" onclick="go('users',{editUser:null})">← Back</button>
+      </div>
+      <div class="card-body">
+        <div class="row2">
+          <div class="form-group"><label>First Name</label><input id="e-fn" value="${u.firstName}"/></div>
+          <div class="form-group"><label>Last Name</label> <input id="e-ln" value="${u.lastName}"/></div>
+        </div>
+        <div class="form-group"><label>Email</label><input id="e-em" value="${u.email}"/></div>
+        <div class="form-group"><label>Phone</label><input id="e-ph" value="${u.phone||""}"/></div>
+        <div class="row2">
+          <div class="form-group"><label>Role</label>
+            <select id="e-ro">
+              ${["Employee","Analyst","Engineer","Manager","Director","Administrator"].map(r=>`<option${u.role===r?" selected":""}>${r}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group"><label>Department</label><input id="e-dp" value="${u.department||""}"/></div>
+        </div>
+        <div class="form-group"><label>Status</label>
+          <select id="e-ac">
+            <option value="true"${u.isActive?" selected":""}>Active</option>
+            <option value="false"${!u.isActive?" selected":""}>Inactive</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="saveEditUser(${u.id})">Save Changes</button>
+          <button class="btn btn-danger"  onclick="deleteUser(${u.id},true)">Delete User</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── Modals ─────────────────────────────────────────────────────── */
+function renderModal() {
+  const m = S.modal;
+  if (m === "add-user")  return renderAddUserModal();
+  if (m === "change-pw") return renderChangePWModal();
+  if (m && typeof m === "object") return renderViewUserModal(m);
+  return "";
+}
+
+function renderViewUserModal(u) {
+  return `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <div class="modal-hdr"><div class="modal-title">User Details</div></div>
+    <div class="modal-body">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+        <div class="avatar" style="width:52px;height:52px;font-size:16px">${initials(u.firstName+" "+u.lastName)}</div>
+        <div>
+          <div style="font-size:17px;font-weight:700">${u.firstName} ${u.lastName}</div>
+          <div style="color:var(--text2);font-size:13px">${u.email}</div>
+        </div>
+      </div>
+      ${[
+        ["Username", `<span class="mono">${u.username}</span>`],
+        ["Role", badgeRole(u.role)],
+        ["Department", u.department||"—"],
+        ["Phone", u.phone||"—"],
+        ["Status", badgeActive(u.isActive)],
+        ["Password", badgePW(u.mustChangePassword)],
+        ["Source", `<span class="badge badge-gray">${u.source}</span>`],
+        ["Joined", fmtDate(u.createdAt)],
+      ].map(([l,v])=>`<div class="detail-row"><span class="detail-label">${l}</span><span class="detail-value">${v}</span></div>`).join("")}
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="editUser(${u.id})">Edit User</button>
+    </div>
+  </div></div>`;
+}
+
+function renderAddUserModal() {
+  return `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <div class="modal-hdr"><div class="modal-title">Add New User</div></div>
+    <div class="modal-body">
+      <div class="row2">
+        <div class="form-group"><label>First Name *</label><input id="a-fn" placeholder="John"/></div>
+        <div class="form-group"><label>Last Name *</label> <input id="a-ln" placeholder="Doe"/></div>
+      </div>
+      <div class="form-group"><label>Email *</label><input id="a-em" type="email" placeholder="john@example.com"/></div>
+      <div class="form-group"><label>Phone</label><input id="a-ph" placeholder="+1-555-0000"/></div>
+      <div class="row2">
+        <div class="form-group"><label>Role</label>
+          <select id="a-ro">${["Employee","Analyst","Engineer","Manager","Director","Administrator"].map(r=>`<option>${r}</option>`).join("")}</select>
+        </div>
+        <div class="form-group"><label>Department</label><input id="a-dp" placeholder="Engineering"/></div>
+      </div>
+      <div class="alert alert-info" style="margin-top:4px">
+        Credentials will be auto-generated and emailed to the user (logged to console in demo).
+      </div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="doAddUser()">Create User</button>
+    </div>
+  </div></div>`;
+}
+
+function renderChangePWModal() {
+  return `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <div class="modal-hdr"><div class="modal-title">Change Password</div></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>New Password</label>
+        <input id="mp-a" type="password" placeholder="Min 8 characters" oninput="pwBar('mp-a','mp-bar','mp-lbl')"/>
+        <div class="pw-bar"><div class="pw-fill" id="mp-bar" style="width:0"></div></div>
+        <div class="pw-hint" id="mp-lbl"></div>
+      </div>
+      <div class="form-group"><label>Confirm Password</label><input id="mp-b" type="password"/></div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="doModalChangePW()">Update Password</button>
+    </div>
+  </div></div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   EVENT HANDLERS
+   ════════════════════════════════════════════════════════════════ */
+
+/* Auth */
+function doLogin() {
+  const id = v("l-id"), pw = v("l-pw");
+  if (!id||!pw) { showAlert("Enter username and password","error"); return; }
+  const r = Auth.login(id,pw);
+  if (!r.ok) { showAlert(r.error,"error"); return; }
+  go(r.user.mustChangePassword ? "change-pw" : "dashboard");
+}
+function doLogout() { Auth.logout(); go("login"); }
+
+function doRequestOTP() {
+  const fn=v("r-fn"), ln=v("r-ln"), em=v("r-em"), ph=v("r-ph"), dp=v("r-dp");
+  if (!fn||!ln||!em) { showAlert("First name, last name and email are required","error"); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { showAlert("Invalid email address","error"); return; }
+  if (DB.users.find(u=>u.email===em.toLowerCase())) { showAlert("This email is already registered","error"); return; }
+  const data = {firstName:fn,lastName:ln,email:em,phone:ph,department:dp};
+  const otp = UserSvc.sendOTP(em, data);
+  setS({page:"otp", otpEmail:em, otpData:data, devOTP:otp, alert:null});
+}
+function doResendOTP() {
+  if (!S.otpData) { go("register"); return; }
+  const otp = UserSvc.sendOTP(S.otpEmail, S.otpData);
+  setS({devOTP:otp});
+  showAlert("Code resent!","success");
+}
+function doVerifyOTP() {
+  const code = [0,1,2,3,4,5].map(i=>{ const el=document.getElementById(`otp${i}`); return el?el.value:""; }).join("");
+  if (code.length<6) { showAlert("Enter all 6 digits","error"); return; }
+  const r = UserSvc.verifyOTP(S.otpEmail, code);
+  if (!r.ok) { showAlert(r.error,"error"); return; }
+  const {user} = UserSvc.create(r.data);
+  showAlert(`Account created! Your credentials have been sent to ${user.email}.`,"success",0);
+  setTimeout(()=>go("login"),3000);
+}
+function doChangePW() {
+  const a=v("cp-a"), b=v("cp-b");
+  if (!a||a.length<8) { showAlert("Password must be at least 8 characters","error"); return; }
+  if (a!==b) { showAlert("Passwords do not match","error"); return; }
+  UserSvc.changePassword(Auth.currentUser.id, a);
+  Auth.refresh();
+  go("dashboard");
+  showAlert("Password updated. Welcome!","success");
+}
+function doModalChangePW() {
+  const a=v("mp-a"), b=v("mp-b");
+  if (!a||a.length<8) { showAlert("Password must be at least 8 characters","error"); return; }
+  if (a!==b) { showAlert("Passwords do not match","error"); return; }
+  UserSvc.changePassword(Auth.currentUser.id, a);
+  Auth.refresh();
+  closeModal();
+  showAlert("Password changed successfully!","success");
+}
+
+/* OTP keyboard helpers */
+function otpFwd(i) {
+  const el=document.getElementById(`otp${i}`);
+  el.value=el.value.replace(/\D/g,"");
+  if (el.value&&i<5) document.getElementById(`otp${i+1}`)?.focus();
+}
+function otpBck(e,i) {
+  if (e.key==="Backspace"&&!document.getElementById(`otp${i}`)?.value&&i>0) document.getElementById(`otp${i-1}`)?.focus();
+}
+
+/* Password strength bar */
+function pwBar(inputId, barId, lblId) {
+  const s = pwStrength(v(inputId)||"");
+  const w = s*25+"%";
+  const cols=["","#dc2626","#d97706","#ca8a04","#16a34a"];
+  const lbls=["","Weak","Fair","Good","Strong"];
+  const bar=document.getElementById(barId), lbl=document.getElementById(lblId);
+  if (bar) { bar.style.width=w; bar.style.background=cols[s]; }
+  if (lbl) { lbl.textContent=lbls[s]||""; lbl.style.color=cols[s]; }
+}
+
+/* Users */
+function viewUser(id) { const u=UserSvc.getById(id); if(u) setS({modal:u}); }
+function editUser(id) { const u=UserSvc.getById(id); if(u) go("edit-user",{editUser:u,modal:null}); }
+function deleteUser(id, fromEdit=false) {
+  if (!confirm("Delete this user permanently?")) return;
+  if (id === Auth.currentUser.id) { showAlert("You cannot delete your own admin account here. Use My Profile.","error"); return; }
+  UserSvc.delete(id);
+  showAlert("User deleted.","success");
+  go("users",{modal:null,editUser:null});
+}
+function deleteOwnAccount() {
+  if (!confirm("Delete your own account? You will be logged out.")) return;
+  const id = Auth.currentUser.id;
+  Auth.logout();
+  UserSvc.delete(id);
+  go("login");
+}
+function doAddUser() {
+  const d={firstName:v("a-fn"),lastName:v("a-ln"),email:v("a-em"),phone:v("a-ph"),role:v("a-ro"),department:v("a-dp")};
+  if (!d.firstName||!d.lastName||!d.email) { showAlert("First name, last name and email are required","error"); return; }
+  if (DB.users.find(u=>u.email===d.email.toLowerCase())) { showAlert("Email already exists","error"); return; }
+  const {user}=UserSvc.create(d);
+  closeModal();
+  showAlert(`User ${user.firstName} created. Credentials logged to console.`,"success");
+  go("users");
+}
+function saveProfile() {
+  const u=Auth.currentUser;
+  UserSvc.update(u.id,{firstName:v("p-fn")||u.firstName,lastName:v("p-ln")||u.lastName,phone:v("p-ph"),department:v("p-dp")});
+  Auth.refresh();
+  showAlert("Profile updated!","success");
+  render();
+}
+function saveEditUser(id) {
+  UserSvc.update(id,{
+    firstName:v("e-fn"),lastName:v("e-ln"),email:v("e-em"),
+    phone:v("e-ph"),role:v("e-ro"),department:v("e-dp"),
+    isActive:v("e-ac")==="true",
+  });
+  showAlert("User updated!","success");
+  go("users",{editUser:null});
+}
+function openModal(m) { setS({modal:m}); }
+function closeModal()  { setS({modal:null}); }
+
+/* Excel */
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById("dz")?.classList.remove("over");
+  const f=e.dataTransfer.files[0];
+  if(f) processExcel(f);
+}
+function handleFile(input) { if(input.files[0]) processExcel(input.files[0]); }
+function processExcel(file) {
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try {
+      const wb=XLSX.read(e.target.result,{type:"binary"});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+      if(!rows.length) { showAlert("No data found in file","error"); return; }
+      const res=UserSvc.importRows(rows);
+      S.importRes=res;
+      showAlert(`Import complete: ${res.filter(r=>r.status==="created").length} users created.`,"success");
+      render();
+    } catch(err) { showAlert("Error reading file: "+err.message,"error"); }
+  };
+  reader.readAsBinaryString(file);
+}
+function downloadSample() {
+  const data=[
+    {firstName:"John",   lastName:"Smith",    email:"john.smith@example.com",   phone:"+1-555-0101",role:"Manager",  department:"Operations"},
+    {firstName:"Sarah",  lastName:"Johnson",  email:"sarah.j@example.com",      phone:"+1-555-0102",role:"Analyst",  department:"Finance"},
+    {firstName:"Michael",lastName:"Brown",    email:"m.brown@example.com",      phone:"+1-555-0103",role:"Engineer", department:"IT"},
+    {firstName:"Emily",  lastName:"Davis",    email:"emily.davis@example.com",  phone:"+1-555-0104",role:"Employee", department:"HR"},
+    {firstName:"Robert", lastName:"Wilson",   email:"r.wilson@example.com",     phone:"+1-555-0105",role:"Manager",  department:"Sales"},
+  ];
+  const ws=XLSX.utils.json_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Users");
+  XLSX.writeFile(wb,"sample_users.xlsx");
+}
+
+/* ── Helpers ────────────────────────────────────────────────────── */
+function v(id) { return document.getElementById(id)?.value?.trim()||""; }
+
+/* ════════════════════════════════════════════════════════════════
+   RENDER
+   ════════════════════════════════════════════════════════════════ */
+function render() {
+  const root=document.getElementById("root");
+  if (!Auth.currentUser) {
+    if (S.page==="register")  root.innerHTML=renderRegister();
+    else if (S.page==="otp")  root.innerHTML=renderOTP();
+    else                      root.innerHTML=renderLogin();
+  } else if (Auth.currentUser.mustChangePassword && S.page!=="change-pw") {
+    S.page="change-pw";
+    root.innerHTML=renderChangePW();
+  } else {
+    root.innerHTML=renderApp();
+  }
+  // Re-attach OTP input listeners after DOM rebuild
+  document.querySelectorAll(".otp-d").forEach((el,i)=>{
+    el.addEventListener("input",()=>otpFwd(i));
+  });
+}
+
+render();
+</script>
+</body>
+</html>
